@@ -5,6 +5,22 @@ const logger = require('../utils/logger');
 function createBot() {
   const bot = new Telegraf(process.env.BOT_TOKEN);
 
+  // Log every update that reaches the bot. Deliberately does not log free text
+  // (could be an admin PIN or a payment SMS) or contact payloads (phone numbers).
+  bot.use(async (ctx, next) => {
+    const started = Date.now();
+    const text = ctx.message && ctx.message.text;
+    logger.info('Bot update received', {
+      type: ctx.updateType,
+      from: ctx.from && ctx.from.id,
+      command: text && text.startsWith('/') ? text.split(/\s/)[0] : undefined,
+      callback: ctx.callbackQuery && ctx.callbackQuery.data,
+      hasContact: !!(ctx.message && ctx.message.contact) || undefined
+    });
+    await next();
+    logger.info('Bot update handled', { type: ctx.updateType, ms: Date.now() - started });
+  });
+
   bot.start(commands.handleStart);
   bot.action('register', commands.handleRegisterButton);
   bot.on('contact', commands.handleContact);

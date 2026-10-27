@@ -25,6 +25,32 @@ function checkRequiredEnv() {
   }
 }
 
+/**
+ * Points Telegram at this server's /api/webhook on every boot and logs what
+ * Telegram reports back. Previously this only happened if someone had run
+ * `npm run set:webhook` by hand, so a missing / stale webhook (or one created
+ * without callback_query in allowed_updates, which silently breaks every
+ * inline button including "Register") left the bot dead with nothing in the logs.
+ */
+async function ensureTelegramWebhook(bot) {
+  const base = (process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+  if (!base) {
+    logger.warn('BACKEND_URL / RENDER_EXTERNAL_URL not set - cannot register Telegram webhook automatically');
+  } else {
+    const url = `${base}/api/webhook`;
+    await bot.telegram.setWebhook(url, { allowed_updates: ['message', 'callback_query'] });
+    logger.info('Telegram webhook set', { url });
+  }
+  const info = await bot.telegram.getWebhookInfo();
+  logger.info('Telegram webhook info', {
+    url: info.url,
+    pending: info.pending_update_count,
+    lastErrorDate: info.last_error_date,
+    lastErrorMessage: info.last_error_message,
+    allowedUpdates: info.allowed_updates
+  });
+}
+
 async function main() {
   checkRequiredEnv();
 
@@ -78,6 +104,9 @@ async function main() {
   const PORT = process.env.PORT || 3001;
   httpServer.listen(PORT, () => {
     logger.info(`Backend listening on port ${PORT}`);
+    ensureTelegramWebhook(bot).catch((err) => {
+      logger.error('ensureTelegramWebhook failed', { error: err.message });
+    });
   });
 
   // Periodic maintenance: auto-release withdrawals stuck past the hold
