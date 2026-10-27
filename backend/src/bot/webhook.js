@@ -32,8 +32,15 @@ function createBot() {
 
   bot.on('text', commands.routeTextMessage);
 
-  bot.catch((err, ctx) => {
+  bot.catch(async (err, ctx) => {
     logger.error('Telegraf error', { error: err.message, stack: err.stack, updateType: ctx.updateType });
+    // Without this the user just sees the bot go silent (e.g. stuck at /start).
+    try {
+      if (ctx.callbackQuery) await ctx.answerCbQuery('Something went wrong. Please try again.');
+      else if (ctx.chat) await ctx.reply('⚠️ Something went wrong. Please try again in a moment.');
+    } catch (replyErr) {
+      logger.warn('Could not send error notice to user', { error: replyErr.message });
+    }
   });
 
   return bot;

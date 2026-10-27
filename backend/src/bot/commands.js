@@ -18,6 +18,21 @@ async function getUser(telegramId) {
   return User.findOne({ telegramId: String(telegramId) });
 }
 
+/**
+ * utils/bootstrap.js pre-creates a placeholder User for ADMIN_ID at every boot
+ * (phone = "admin-<id>") so admin endpoints have a record to point at. That
+ * placeholder has never shared a real contact, so it must NOT count as a
+ * completed registration - otherwise /start greets the admin with "Welcome
+ * back" and the Share Contact step is skipped forever.
+ */
+function isPlaceholderUser(user) {
+  return !!user && typeof user.phone === 'string' && user.phone.startsWith('admin-');
+}
+
+function isRegistered(user) {
+  return !!user && !isPlaceholderUser(user);
+}
+
 async function setState(telegramId, action, data = {}) {
   await UserState.findOneAndUpdate(
     { userId: String(telegramId) },
@@ -56,7 +71,8 @@ async function handleStart(ctx) {
   const telegramId = String(ctx.from.id);
   const user = await getUser(telegramId);
 
-  if (!user) {
+  if (!isRegistered(user)) {
+    await clearState(telegramId); // drop any stale half-finished flow from a previous attempt
     await ctx.reply(
       '👋 *Welcome to Bingo!*\nPlay 75-ball Bingo right inside Telegram.',
       { parse_mode: 'Markdown', ...kb.mainMenu(null) }
@@ -73,7 +89,7 @@ async function handleStart(ctx) {
 async function handleRegisterButton(ctx) {
   const telegramId = String(ctx.from.id);
   const existing = await getUser(telegramId);
-  if (existing) {
+  if (isRegistered(existing)) {
     await ack(ctx);
     return ctx.reply('You are already registered!', { ...kb.mainMenu(existing) });
   }
@@ -95,17 +111,42 @@ async function handleContact(ctx) {
   }
 
   let user = await getUser(telegramId);
-  if (user) {
+  if (isRegistered(user)) {
     return ctx.reply('You are already registered!', kb.removeKeyboard());
   }
 
-  user = await User.create({
-    telegramId,
-    telegramUsername: ctx.from.username,
-    phone: contact.phone_number,
-    displayName: ctx.from.first_name || ctx.from.username || 'Player',
-    isAdmin: telegramId === ADMIN_ID
-  });
+  const phone = contact.phone_number;
+  const displayName = ctx.from.first_name || ctx.from.username || 'Player';
+
+  try {
+    if (user) {
+      // Bootstrap-created admin placeholder: complete it with the real contact
+      // instead of trying to insert a second User for the same telegramId.
+      user.phone = phone;
+      user.telegramUsername = ctx.from.username;
+      user.displayName = displayName;
+      user.isAdmin = telegramId === ADMIN_ID;
+      user.lastActive = new Date();
+      await user.save();
+    } else {
+      user = await User.create({
+        telegramId,
+        telegramUsername: ctx.from.username,
+        phone,
+        displayName,
+        isAdmin: telegramId === ADMIN_ID
+      });
+    }
+  } catch (err) {
+    logger.error('Registration failed', { telegramId, error: err.message, code: err.code });
+    if (err.code === 11000) {
+      return ctx.reply(
+        '⚠️ This phone number is already linked to another account. Please contact support.',
+        kb.removeKeyboard()
+      );
+    }
+    return ctx.reply('❌ Registration failed. Please try again in a moment.', kb.removeKeyboard());
+  }
 
   await ctx.reply('✅ *Registration Successful!*', { parse_mode: 'Markdown', ...kb.removeKeyboard() });
 
