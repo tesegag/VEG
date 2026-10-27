@@ -1,7 +1,9 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const mongoose = require('mongoose');
+// Use the SAME mongoose instance the backend models use (backend/node_modules),
+// otherwise connect() happens on one copy and queries on another and time out.
+const mongoose = require(require.resolve('mongoose', { paths: [path.join(__dirname, '..', 'backend')] }));
 const Cartela = require('../backend/src/models/Cartela');
 
 function parseCsv(text) {
